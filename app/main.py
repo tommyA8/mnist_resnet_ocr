@@ -72,16 +72,16 @@ def get_public_key():
 # Prediction endpoint
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> PredictResponse:
-    # 1) decrypt national id
+    # decrypt national id
     try:
         nid_plain = rsa_decrypt_base64(req.encrypted_nid).decode("utf-8")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid encrypted_nid: {str(e)}")
 
-    # 2) hash the national id for storage/audit (do NOT log plaintext)
+    # hash the national id for storage/audit (do NOT log plaintext)
     hashed_nid = hash_national_id(nid_plain)
 
-    # 3) decode image
+    # decode image
     try:
         image_b64 = req.image_b64
         # Support data URLs (e.g., "data:image/png;base64,....")
@@ -92,10 +92,10 @@ def predict(req: PredictRequest) -> PredictResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image data: {str(e)}")
 
-    # 4) preprocess -> tensor
+    # preprocess -> tensor
     input_tensor = app.state.preprocess(image).unsqueeze(0).to(DEVICE)  # shape [1, C, H, W]
 
-    # 5) inference
+    # inference
     with torch.no_grad():
         outputs = app.state.model(input_tensor)  # logits [1, 10]
         probs: List[float] = (
