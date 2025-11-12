@@ -1,0 +1,11 @@
+torchvision
+torch
+numpy
+matplotlib 
+pillow
+scikit-learn 
+seaborn
+python-dotenv
+fastapi
+uvicorn
+cryptography
