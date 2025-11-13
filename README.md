@@ -2,6 +2,11 @@
 
 A FastAPI service that serves MNIST digit predictions using a ResNet18 model and secure, field-level encryption. Clients send the image as a base64 string encrypted with AES-GCM, and the AES key is wrapped with RSA-OAEP (hybrid encryption). A legacy RSA-only path is also supported for backwards compatibility.
 
+# Demo API Usage
+
+![demo](./assets/demo.png)
+
+
 ## Overview
 
 - Framework: FastAPI, PyTorch, TorchVision
@@ -51,7 +56,7 @@ Start the server (auto-reload for dev):
 uvicorn app.main:app --reload
 ```
 
-Health/public key:
+## Get public key:
 
 - `GET /public_key` — returns `{ "public_key_pem": "-----BEGIN PUBLIC KEY-----..." }`
 
@@ -91,8 +96,6 @@ Response:
 ```
 
 Notes:
-
-- If `MODEL_PATH` is missing, the model runs with random weights (useful for wiring tests, not for accuracy).
 - Preprocessing: images are resized to 224×224, converted to 3-channel grayscale, and converted to tensor.
 
 ## Clients
