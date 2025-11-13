@@ -1,17 +1,13 @@
-from pydantic import BaseModel, Field
-from typing import Optional
+from pydantic import BaseModel
+from typing import Optional, List
 
 
 class PredictRequest(BaseModel):
-    # encrypted_nid must be base64 string of RSA-OAEP ciphertext encrypted with server public key
-    encrypted_nid: str
-    # image is expected to be base64-encoded image (png/jpg) in the request
-    image_b64: str
-    # optional metadata
-    metadata: Optional[dict] = None
+    enc_key_b64: Optional[str] = None  # RSA-OAEP encrypted AES key (base64)
+    nonce_b64: Optional[str] = None    # AES-GCM nonce (base64)
+    ciphertext_b64: Optional[str] = None  # AES-GCM ciphertext (base64). Tag is expected to be appended per AESGCM API.
+    aad_b64: Optional[str] = None      # Optional AAD for AES-GCM (base64)
 
 class PredictResponse(BaseModel):
     predicted_class: int
-    probabilities: list
-    hashed_nid: str
-    note: Optional[str] = None
+    probabilities: List[float]
