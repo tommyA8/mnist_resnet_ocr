@@ -1,8 +1,7 @@
+from __future__ import annotations
 import os
 import base64
 from io import BytesIO
-from typing import List
-
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -13,8 +12,8 @@ from app.models.predict import PredictRequest, PredictResponse
 from app.utils.encryption import (
     generate_rsa_keypair,
     get_public_key_pem,
-    hash_national_id,
     rsa_decrypt_base64,
+    aesgcm_decrypt_with_rsa_key,
 )
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "checkpoints/mnist_resnet18_epoch_3.pth")  # path to saved model weights
@@ -37,7 +36,7 @@ def load_model(path: str = MODEL_PATH) -> torch.nn.Module:
     model.eval()
     return model
 
-app = FastAPI(title="MNIST-ResNet Prediction API (with field encryption)")
+app = FastAPI(title="MNIST-ResNet Prediction API")
 
 
 @app.on_event("startup")
@@ -54,40 +53,42 @@ def on_startup() -> None:
         transforms.Resize((224, 224)),  # ResNet input size
         transforms.Grayscale(num_output_channels=3),  # convert 1 → 3 channels
         transforms.ToTensor(),
-        # 3-channel mean/std to match 3 output channels from Grayscale
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        transforms.Normalize((0.5,), (0.5,))
     ])
 
-# Simple health check
-@app.get("/health")
-def health():
-    return {"status": "ok", "device": str(DEVICE)}
 
-# Endpoint to retrieve public key (clients use this to encrypt national_id)
+
+
 @app.get("/public_key")
 def get_public_key():
-    # return PEM as string
     return {"public_key_pem": get_public_key_pem()}
 
-# Prediction endpoint
+
+
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest) -> PredictResponse:
-    # decrypt national id
-    try:
-        nid_plain = rsa_decrypt_base64(req.encrypted_nid).decode("utf-8")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid encrypted_nid: {str(e)}")
+    # Prefer AES-GCM hybrid if provided; fallback to legacy RSA transport
+    if req.enc_key_b64 and req.nonce_b64 and req.ciphertext_b64:
+        try:
+            plaintext = aesgcm_decrypt_with_rsa_key(
+                enc_key_b64=req.enc_key_b64,
+                nonce_b64=req.nonce_b64,
+                ciphertext_b64=req.ciphertext_b64,
+                aad_b64=req.aad_b64,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"AES-GCM decrypt failed: {str(e)}")
+    elif req.encrypted_image_b64:
+        try:
+            plaintext = rsa_decrypt_base64(req.encrypted_image_b64)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"RSA decrypt failed: {str(e)}")
+    else:
+        raise HTTPException(status_code=400, detail="Missing encryption fields: provide AES-GCM fields (enc_key_b64, nonce_b64, ciphertext_b64) or legacy encrypted_image_b64")
 
-    # hash the national id for storage/audit (do NOT log plaintext)
-    hashed_nid = hash_national_id(nid_plain)
-
-    # decode image
+    # plaintext is expected to be base64-encoded image bytes
     try:
-        image_b64 = req.image_b64
-        # Support data URLs (e.g., "data:image/png;base64,....")
-        if "," in image_b64:
-            image_b64 = image_b64.split(",", 1)[1]
-        image_bytes = base64.b64decode(image_b64)
+        image_bytes = base64.b64decode(plaintext)
         image = Image.open(BytesIO(image_bytes)).convert("RGB")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image data: {str(e)}")
@@ -98,16 +99,11 @@ def predict(req: PredictRequest) -> PredictResponse:
     # inference
     with torch.no_grad():
         outputs = app.state.model(input_tensor)  # logits [1, 10]
-        probs: List[float] = (
-            torch.nn.functional.softmax(outputs, dim=1).cpu().numpy().tolist()[0]
-        )
+        probs = torch.nn.functional.softmax(outputs, dim=1).cpu().numpy().tolist()[0]
         pred_class = int(torch.argmax(outputs, dim=1).cpu().item())
 
-    # 6) respond (no plaintext nid returned)
-    resp = PredictResponse(
+    return PredictResponse(
         predicted_class=pred_class,
-        probabilities=probs,
-        hashed_nid=hashed_nid,
-        note="national id received (decrypted server-side) and hashed for audit/storage"
+        probabilities=probs
     )
-    return resp
+
